@@ -81,6 +81,7 @@ class engine(object):
         self.engine = self.dll.cl_engine_new()
         self.callbacks = {'pre_scan': None, 'post_scan': None}
         self.c_callbacks = self.callbacks
+
     def load_db(self, dbdir=None, options=dbopt['stdopt']):
         if not dbdir:
             dbdir = self.dll.cl_retdbdir()
@@ -89,12 +90,15 @@ class engine(object):
         if ret != 0:
             raise ClamavError(ret, self.dll.strerror(ret))
         return csigs[0]
+
     def compile(self):
         # register callbacks
         for k,v in self.callbacks.items():
             if v is not None:
-                getattr(self.dll, 'cl_engine_set_clcb_%s' %  k)(self.engine, self.c_callbacks[k])
+                getattr(self.dll, 'cl_engine_set_clcb_%s' %  k)(self.engine,\
+                    self.c_callbacks[k])
         self.dll.cl_engine_compile(self.engine)
+
     def scanfile(self, filename, options=scanopt['stdopt']):
         fname = ffi.new('const char[]', filename.encode())
         cvir = ffi.new('const char**')
@@ -107,7 +111,10 @@ class engine(object):
             return ffi.string(cvir[0])
         else:
             raise ClamavError(ret, ffi.string(self.dll.cl_strerror(ret)))
-    def _get_callback(self, n): return self.callbacks[n]
+
+    def _get_callback(self, n):
+        return self.callbacks[n]
+
     def _set_callback(self, f, n, first_fd=True):
         def _call(*args):
             call_args = [os.fdopen(args[0])] if first_fd else []
@@ -125,10 +132,13 @@ class engine(object):
             return res
         self.callbacks[n] = _call
         self.c_callbacks[n] = ffi.callback(_callback_str(_bases[n]), _call)
+
     @property
     def pre_scan_callback(self): return self._get_callback('pre_scan')
+
     @pre_scan_callback.setter
     def pre_scan_callback(self, f): self._set_callback(f, 'pre_scan')
+
     def __del__(self):
         if hasattr(self, 'engine'):
             self.dll.cl_engine_free(self.engine)
