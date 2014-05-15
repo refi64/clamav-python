@@ -11,6 +11,7 @@ def _reraise(ex):
     ''')
 
 _pre_callback_base = ['int', 'const char*', 'void*']
+_post_callback_base = ['int', 'int', 'const char*', 'void*']
 _callback_str = lambda c: 'int(%s)' % (', '.join(c))
 _callback_ffi = lambda c, n: 'int (*%s)(%s)' % (n, ','.join(c))
 
@@ -29,11 +30,14 @@ void cl_engine_compile(void*);
 int cl_scanfile(const char*, const char**, unsigned long*, void*, unsigned int);
 
 typedef %s;
+typedef %s;
 
 void cl_engine_set_clcb_pre_scan(void*, clcb_pre_scan);
-''' % (_callback_ffi(_pre_callback_base, 'clcb_pre_scan')))
+void cl_engine_set_clcb_post_scan(void*, clcb_post_scan);
+''' %  (_callback_ffi(_pre_callback_base, 'clcb_pre_scan'),
+        _callback_ffi(_post_callback_base, 'clcb_post_scan')))
 
-_bases = {'pre_scan': _pre_callback_base}
+_bases = {'pre_scan': _pre_callback_base, 'post_scan': _post_callback_base}
 
 dbopt = {'phishing': 0x2,
          'phishing_urls': 0x8,
@@ -115,15 +119,26 @@ class engine(object):
     def _get_callback(self, n):
         return self.callbacks[n]
 
-    def _set_callback(self, f, n, first_fd=True):
+    def _set_callback(self, f, n, first_fd=True, keep_fd=True):
         def _call(*args):
-            call_args = [os.fdopen(args[0])] if first_fd else []
+            call_args = list(args)
+            call_args.pop() # the void pointer
+            if first_fd:
+                del call_args[0]
+                if keep_fd:
+                    call_args.insert(0, os.fdopen(args[0]))
+            for i, arg in enumerate(call_args):
+                if arg.__class__.__name__ == 'CData':
+                    try:
+                        call_args[i] = ffi.string(arg)
+                    except RuntimeError:
+                        call_args[i] = None
             try:
                 res = f(*call_args)
                 if res is None:
                     res = result['clean']
                 if res not in result:
-                    raise ClamavError()
+                    raise ClamavError(0, '')
             except ClamavError:
                 return result['break']
             except:
@@ -137,7 +152,15 @@ class engine(object):
     def pre_scan_callback(self): return self._get_callback('pre_scan')
 
     @pre_scan_callback.setter
-    def pre_scan_callback(self, f): self._set_callback(f, 'pre_scan')
+    def pre_scan_callback(self, f):
+        self._set_callback(f, 'pre_scan', first_fd=True, keep_fd=True)
+
+    @property
+    def post_scan_callback(self): return self._get_callback('post_scan')
+
+    @post_scan_callback.setter
+    def post_scan_callback(self, f):
+        self._set_callback(f, 'post_scan', first_fd=True, keep_fd=False)
 
     def __del__(self):
         if hasattr(self, 'engine'):
